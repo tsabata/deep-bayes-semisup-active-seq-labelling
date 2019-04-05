@@ -30,12 +30,12 @@ This repository contains experiments for article: Deep Bayesian Semi-Supervised 
     python -u experiments/bilstm_fcn_limited  CHUNK
  ```
  
-* BI-LSTM-CRF - experiment with limited number of tokens
+* BI-LSTM-CRF - experiment with unlimited number of tokens
 
 ```   
-    python -u experiments/bilstm_crf_limited  NER    
-    python -u experiments/bilstm_crf_limited  POS
-    python -u experiments/bilstm_crf_limited  CHUNK
+    python -u experiments/bilstm_crf_unlimited  NER    
+    python -u experiments/bilstm_crf_unlimited  POS
+    python -u experiments/bilstm_crf_unlimited  CHUNK
  ```
  
 * BI-LSTM-CRF - experiment with limited number of tokens
