@@ -10,7 +10,7 @@ This repository contains experiments for article: Deep Bayesian Semi-Supervised 
 
 2. Download [Glove embeddings](http://nlp.stanford.edu/data/glove.840B.300d.zip) and store it in:
 
-`datasets/glove/glove.840B.300d.txt`
+    `datasets/glove/glove.840B.300d.txt`
 
 3. Run experiment
 
