@@ -1,0 +1,16 @@
+name: deep-bayes-active-semisup
+channels:
+- conda-forge
+- pytorch
+dependencies:
+- python=3
+- pip>=8.1.0
+- jupyter
+- numpy
+- pandas
+- scikit-learn
+- pytorch
+- torchvision
+- cudatoolkit=9.0
+- nltk
+- dill
