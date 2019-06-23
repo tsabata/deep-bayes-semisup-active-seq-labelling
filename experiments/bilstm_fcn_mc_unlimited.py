@@ -8,10 +8,10 @@ import torch
 
 from active_learning.labeler import Labeler
 from active_learning.telemetry import ActiveLearningTelemetry
-from active_learning.utils import active_learning_loop_limited_tokens
+from active_learning.utils import active_learning_loop
 
 from datasets.conll2003 import Conll2003Dataset
-from models.supervised.supervised import SupervisedModel
+from models.supervised.supervised_mc import SupervisedModelAL
 
 if __name__ == "__main__":
 
@@ -20,9 +20,9 @@ if __name__ == "__main__":
     models_dir = 'experiments/models/saves/'
 
     # ----------------------------------- Prepare dataset ------------------------------------
+
     TASK_TYPE = 'NER' if len(sys.argv) < 2 else sys.argv[1]
     LABELED_UNLABELED_RATIO = 0.1
-    ID_sim_beta = 1
     train_dataset, test_dataset = Conll2003Dataset(task=TASK_TYPE).train_test_split()
     ltrain_dataset, utrain_dataset = train_dataset.split(LABELED_UNLABELED_RATIO)
     labeled_train_x, labeled_train_y = ltrain_dataset.x_embeddings, ltrain_dataset.y
@@ -33,14 +33,14 @@ if __name__ == "__main__":
           f"test size: {len(test_dataset_y)})")
     # ------------------------------------ create model ---------------------------------------
     dropout_rate = 0.4
-    model = SupervisedModel(train_dataset.max_tag_idx + 1, 100, 2, dropout_rate, dropout_rate)
+    model = SupervisedModelAL(train_dataset.max_tag_idx + 1, 100, 2, dropout_rate, dropout_rate)
 
     if device.type == 'cuda':
         model = model.cuda()
     model_kwargs = dict(device=device, repeats=250)
 
     # ------------------------------ setup active learning ------------------------------------
-    al_batch_size = 1000 if len(sys.argv) < 3 else int(sys.argv[2])
+    al_batch_size = 100 if len(sys.argv) < 3 else int(sys.argv[2])
     labeler = Labeler()
     print(f"al_batch_size {al_batch_size}")
 
@@ -62,23 +62,21 @@ if __name__ == "__main__":
 
     score = model.score(test_dataset_x, test_dataset_y, batch_size, device)
     telemetries_list = []
-    for strategy in ['nbest_sequence_entropy', 'random','total_token_entropy', 'least_confident', 'token_entropy',
-                     'margin']:
+    for strategy in ['total_token_entropy', 'least_confident', 'token_entropy', 'nbest_sequence_entropy',
+                     'margin', 'random']:
         telemetry = ActiveLearningTelemetry(strategy)
-        telemetry.add_point(0, np.zeros((1,5)), np.zeros((1, 5)), None, score)
+        telemetry.add_point(0, np.zeros((1, 5)), np.zeros((1, 5)), None, score)
         labeled_train_x, labeled_train_y = copy.deepcopy(ltrain_dataset.x_embeddings), copy.deepcopy(ltrain_dataset.y)
-        unlabeled_train_x, unlabeled_train_y = copy.deepcopy(utrain_dataset.x_embeddings),\
-                                               copy.deepcopy(utrain_dataset.y)
+        unlabeled_train_x, unlabeled_train_y = copy.deepcopy(utrain_dataset.x_embeddings), copy.deepcopy(
+            utrain_dataset.y)
         sim = copy.deepcopy(utrain_dataset.sim.tolist())
         test_dataset_x, test_dataset_y = test_dataset.x_embeddings, test_dataset.y
         model = torch.load(os.path.join(models_dir, path))
         for i in range(20):
             print(telemetry)
-            indices, annotated_cnt, pseudolabeled_ratios, threshold_ratios, batch = \
-                active_learning_loop_limited_tokens(
+            indices, annotated_cnt, pseudolabeled_ratios, threshold_ratios, batch = active_learning_loop(
                 labeled_train_x, labeled_train_y,
-                unlabeled_train_x, unlabeled_train_y,
-                sim, ID_sim_beta,
+                unlabeled_train_x, unlabeled_train_y, sim, 1,
                 model, model_kwargs, strategy, labeler, al_batch_size)
             scores_list = []
             for unit in range(10):

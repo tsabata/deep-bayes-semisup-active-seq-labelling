@@ -11,7 +11,7 @@ from active_learning.telemetry import ActiveLearningTelemetry
 from active_learning.utils import active_learning_loop
 
 from datasets.conll2003 import Conll2003Dataset
-from models.supervised.supervised_al import SupervisedModelAL
+from models.supervised.supervised import SupervisedModel
 
 if __name__ == "__main__":
 
@@ -33,7 +33,7 @@ if __name__ == "__main__":
           f"test size: {len(test_dataset_y)})")
     # ------------------------------------ create model ---------------------------------------
     dropout_rate = 0.4
-    model = SupervisedModelAL(train_dataset.max_tag_idx + 1, 100, 2, dropout_rate, dropout_rate)
+    model = SupervisedModel(train_dataset.max_tag_idx + 1, 100, 2, dropout_rate, dropout_rate)
 
     if device.type == 'cuda':
         model = model.cuda()

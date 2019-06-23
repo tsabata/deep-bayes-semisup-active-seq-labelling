@@ -8,19 +8,23 @@ import logging
 from time import time
 import numpy as np
 
+from active_learning.almodel import ALModel
 from datasets.conll2002 import Conll2002Dataset
 from datasets.conll2003 import Conll2003Dataset
 
 
-class SupervisedModel(nn.Module):
+class SupervisedModel(ALModel, nn.Module):
 
-    def __init__(self, input_vocab_size, n_classes, embedding_dim, hidden_dim, lstm_layers,
-                 dropout):
+    def __init__(self, n_classes, hidden_dim, lstm_layers,
+                 lstm_dropout=0.1, output_dropout=0.1):
         super().__init__()
         self.n_classes = n_classes
-        self.embedding = nn.Embedding(input_vocab_size, embedding_dim)
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, lstm_layers, dropout=dropout,
+        embedding_dim = 300
+        #self.embedding = nn.Embedding(input_vocab_size, embedding_dim)
+        #self.embedding_dropout = nn.Dropout(p=embedding_dropout)
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, lstm_layers, dropout=lstm_dropout,
                             bidirectional=True)
+        self.output_dropout = nn.Dropout(p=output_dropout)
         self.fc1 = nn.Linear(2 * hidden_dim, n_classes)
         logging.debug("Net:\n%r", self)
 
@@ -28,10 +32,11 @@ class SupervisedModel(nn.Module):
         return self.embedding(word_indexes)
 
     def forward(self, packed_sents):
-        embedded_sents = nn.utils.rnn.PackedSequence(self.get_embedded(packed_sents.data),
-                                                     packed_sents.batch_sizes)
-        out_packed_sequence, _ = self.lstm(embedded_sents)
-        out = self.fc1(out_packed_sequence.data)
+        embedded_sents = packed_sents.data
+        embedded_sents_packed = nn.utils.rnn.PackedSequence(embedded_sents,
+                                                            packed_sents.batch_sizes)
+        out_packed_sequence, _ = self.lstm(embedded_sents_packed)
+        out = self.fc1(self.output_dropout(out_packed_sequence.data))
         return F.log_softmax(out, dim=1)
 
     def predict(self, sents, device):
@@ -42,12 +47,13 @@ class SupervisedModel(nn.Module):
 
         out = self.forward(x)
         del x
-        predictions = torch.argmax(out, dim=1).cpu()
-        out = out.cpu()
+        predictions = torch.argmax(out, dim=1).cpu().numpy()
+        out = out.cpu().numpy()
 
         return out, predictions
 
-    def train_batch(self, sents, sents_tags, device, lr=0.01):
+    def train_batch(self, sents, sents_tags, device = None, lr=0.01):
+        self.train()
         x = nn.utils.rnn.pack_sequence(sents)
         y = nn.utils.rnn.pack_sequence(sents_tags)
         if device.type == 'cuda':
@@ -61,9 +67,7 @@ class SupervisedModel(nn.Module):
         predictions = torch.argmax(out, dim=1).cpu()
         out = out.cpu()
         loss = loss.cpu()
-        y = y.cpu()
         del x
-        del y
         torch.cuda.empty_cache()
 
         return out, loss, predictions
@@ -92,6 +96,7 @@ class SupervisedModel(nn.Module):
 
                 print("Batch %d, number of processed sentences %d, loss %.3f, accuracy %.2f" %
                       (batch_idx + 1, batch_size * (batch_idx + 1), loss.item(), acc))
+
 
     def evaluate(self, x, y, batch_size, device):
         self.eval()
@@ -126,37 +131,58 @@ class SupervisedModel(nn.Module):
                 "recall": recall_score(y_gt, y_pred, average='macro')
                 }
 
-    def _data_generator(self, x, y, batch_size):
-        for i in range(0, len(y), batch_size):
+
+    def viterbi_paths(self, X: List[np.ndarray], device, **kwargs):
+        self.eval()
+        with torch.no_grad():
+            paths = []
+            path_probs = []
+            for batch_idx, x_batch in enumerate(self._data_generator(X)):
+                sigmoids, predictions = self.predict(x_batch, device)
+
+                paths.append(np.array([predictions]))
+                path_probs.append(np.array([sigmoids.max(axis=1).sum()]))
+        return paths, path_probs
+
+    def state_confidences(self, X: List[np.ndarray], device, **kwargs) -> List[np.ndarray]:
+        self.eval()
+        with torch.no_grad():
+            state_confidences = []
+            for batch_idx, x_batch in enumerate(self._data_generator(X)):
+                sigmoids, predictions = self.predict(x_batch, device)
+                state_confidences.append(sigmoids)
+        return state_confidences
+
+    def _data_generator(self, x, y=None, batch_size=1):
+        for i in range(0, len(x), batch_size):
             x_batch = x[i:i + batch_size]
-            y_batch = y[i:i + batch_size]
-
             x_batch.sort(key=lambda l: len(l), reverse=True)
-            y_batch.sort(key=lambda l: len(l), reverse=True)
-
-            yield [torch.LongTensor(s) for s in x_batch], [torch.LongTensor(s) for s in y_batch]
+            if y:
+                y_batch = y[i:i + batch_size]
+                y_batch.sort(key=lambda l: len(l), reverse=True)
+                yield [torch.Tensor(s) for s in x_batch], [torch.LongTensor(s) for s in y_batch]
+            else:
+                yield [torch.Tensor(s) for s in x_batch]
 
 
 if __name__ == "__main__":
-    dataset = Conll2003Dataset(save_file_path='datasets/saves/conll2003NER.pkl', task='NER')
+    dataset = Conll2003Dataset(save_file_path='../../datasets/saves/conll2003NER.pkl', task='NER')
 
     device = torch.device("cpu" if not torch.cuda.is_available() else "cuda")
 
     train_dataset, test_dataset = dataset.train_test_split()
-
     ltrain_dataset, utrain_dataset = train_dataset.split(0.1)
 
-    model = SupervisedModel(dataset.max_word_idx + 1, dataset.max_tag_idx + 1, 20, 100, 2, 0.8)
+    model = SupervisedModelAL(dataset.max_tag_idx + 1, 100, 2, 0.8)
     if device.type == 'cuda':
         model = model.cuda()
 
     batch_size = 200
     for epoch_idx in range(10):
         print("--------- EPOCH: %d -------------" % (epoch_idx + 1))
-        model.train_epoch(train_dataset.x, train_dataset.y, batch_size, device, 0.01)
-        print(f"Labeled train score: {model.score(train_dataset.x, train_dataset.y, batch_size, device)}")
-        print(f"Unlabeled train score: {model.score(utrain_dataset.x, utrain_dataset.y, batch_size, device)}")
-        print(f"Test score:  {model.score(test_dataset.x, test_dataset.y, batch_size, device)}")
-        print('')
+        model.train_epoch(train_dataset.x_embeddings, train_dataset.y, batch_size, device, 0.01)
+        print(f"Labeled train score: {model.score(train_dataset.x_embeddings, train_dataset.y, batch_size, device)}")
+        print(f"Unlabeled train score: {model.score(utrain_dataset.x_embeddings, utrain_dataset.y, batch_size, device)}")
+        print(f"Test score:  {model.score(test_dataset.x_embeddings, test_dataset.y, batch_size, device)}")
 
-    torch.save(model, 'saves/supervised_lmpretraining_5epochs.pkl')
+    #torch.save(model, 'models/supervised/saves/supervised_lmpretraining_5epochs.pkl')

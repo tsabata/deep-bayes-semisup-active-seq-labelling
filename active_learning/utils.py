@@ -164,8 +164,8 @@ def active_learning_loop_limited_tokens(labeled_x: List[np.ndarray], labeled_y: 
                           id_beta: float,
                           model, model_kwargs : Dict[str, Any], strategy, labeler,
                           al_batch_size=1000):
-    indices, annotated, annotated_cnt, pseudolabeld_ratios, threshold_ratios = active_learning_loop_limited_tokens(
-        labeled_x, labeled_y,
+    indices, annotated, annotated_cnt, pseudolabeld_ratios, threshold_ratios \
+        = active_learning_step_limited_tokens(
         unlabeled_x, unlabeled_y, np.array(id_sim), id_beta,
         model, model_kwargs, labeler, strategy, al_batch_size)
     batch = []
